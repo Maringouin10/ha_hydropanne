@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Hydro-Panne",
-        "description": "Détecte les pannes d'électricité à votre domicile à partir des données ouvertes d'Hydro-Québec. Les coordonnées reprennent par défaut l'emplacement de votre Home Assistant.",
+        "description": "Détecte les pannes d'électricité à votre domicile à partir du flux temps réel Info-pannes d'Hydro-Québec. Les coordonnées reprennent par défaut l'emplacement de votre Home Assistant.",
         "data": {
           "name": "Nom",
           "latitude": "Latitude",
@@ -11,12 +11,12 @@
           "radius": "Rayon de recherche (mètres)"
         },
         "data_description": {
-          "radius": "Une panne est signalée lorsque votre point se trouve dans une zone touchée ; le rayon sert aussi à lister les pannes à proximité."
+          "radius": "Une panne est signalée lorsque le centre d'une panne se trouve à moins de cette distance de votre domicile."
         }
       }
     },
     "error": {
-      "cannot_connect": "Impossible de joindre le service de données ouvertes d'Hydro-Québec."
+      "cannot_connect": "Impossible de joindre le service Info-pannes d'Hydro-Québec."
     },
     "abort": {
       "already_configured": "Cet emplacement est déjà configuré."

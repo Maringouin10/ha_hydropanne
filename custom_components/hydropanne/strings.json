@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Hydro-Panne",
-        "description": "Detect power outages at your home using Hydro-Québec open data. The coordinates default to your Home Assistant location.",
+        "description": "Detect power outages at your home using Hydro-Québec's real-time Info-pannes feed. The coordinates default to your Home Assistant location.",
         "data": {
           "name": "Name",
           "latitude": "Latitude",
@@ -11,12 +11,12 @@
           "radius": "Search radius (meters)"
         },
         "data_description": {
-          "radius": "An outage is reported when your point falls inside an outage area; the radius also lists nearby outages."
+          "radius": "An outage is reported when the centre of an outage is within this distance of your home."
         }
       }
     },
     "error": {
-      "cannot_connect": "Unable to reach the Hydro-Québec open data service."
+      "cannot_connect": "Unable to reach the Hydro-Québec Info-pannes service."
     },
     "abort": {
       "already_configured": "This location is already configured."

@@ -62,9 +62,7 @@ class HydroPanneConfigFlow(ConfigFlow, domain=DOMAIN):
 
             client = HydroPanneApiClient(async_get_clientsession(self.hass))
             try:
-                await client.async_get_outages(
-                    latitude, longitude, user_input[CONF_RADIUS]
-                )
+                await client.async_get_all_outages()
             except HydroPanneApiError:
                 errors["base"] = "cannot_connect"
             else:

@@ -19,8 +19,8 @@ Intégration Home Assistant pour détecter les **pannes d'électricité Hydro-Qu
 | `sensor.pannes_a_proximite` | Mesure | Nombre de pannes dans le rayon |
 | `sensor.cause` | Texte | Cause de la panne (si connue) |
 
-Les données proviennent du jeu de données ouvertes officiel d'Hydro-Québec
-([pannes-interruptions][hq-open-data]) — aucun compte Hydro-Québec requis.
+Les données proviennent du flux temps réel officiel **Info-pannes** d'Hydro-Québec
+(celui qui alimente la [carte des pannes][hq-infopannes]) — aucun compte requis.
 
 ---
 
@@ -94,9 +94,11 @@ entities:
 
 ## Source des données
 
-- **API** : [Données ouvertes Hydro-Québec][hq-open-data] (OpenDataSoft Explore v2.1)
+- **API** : flux temps réel Info-pannes d'Hydro-Québec (`pannes.hydroquebec.com`), la source de la [carte officielle des pannes][hq-infopannes]
 - **Mise à jour** : toutes les 5 minutes (configurable)
-- **Méthode de détection** : algorithme point-dans-polygone (ray casting) sur la géométrie GeoJSON de chaque panne — aucune dépendance externe
+- **Méthode de détection** : distance orthodromique (haversine) entre le centre de chaque panne et votre domicile, comparée au rayon configuré — aucune dépendance externe
+
+> ℹ️ Le jeu de données ouvertes OpenDataSoft (`donnees.hydroquebec.com/.../pannes-interruptions`) n'est **pas** utilisé : il s'agit d'une coquille vide (« API ») qui ne contient aucune donnée de panne.
 
 ---
 
@@ -110,4 +112,4 @@ entities:
 [release-url]: https://github.com/maringouin10/ha_hydropanne/releases
 [validate-badge]: https://github.com/maringouin10/ha_hydropanne/actions/workflows/validate.yml/badge.svg
 [validate-url]: https://github.com/maringouin10/ha_hydropanne/actions/workflows/validate.yml
-[hq-open-data]: https://donnees.hydroquebec.com/explore/dataset/pannes-interruptions/
+[hq-infopannes]: https://infopannes.solutions.hydroquebec.com/

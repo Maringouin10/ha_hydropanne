@@ -20,40 +20,31 @@ from homeassistant.util import dt as dt_util
 
 from .api import HydroPanneApiClient, HydroPanneApiError
 from .const import DEFAULT_RADIUS, DEFAULT_SCAN_INTERVAL, DOMAIN
-from .geo import extract_geometry, point_in_geometry
+from .geo import haversine_m, parse_coordinates
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
-# Le jeu de données est en français ; on accepte plusieurs noms de champ
-# possibles afin d'être robuste aux variations du fournisseur de données.
-_CUSTOMER_KEYS = ("nbclients", "nb_clients", "clients", "nombre_clients")
-_CAUSE_KEYS = ("cause", "cause_panne", "description")
-_START_KEYS = ("debut", "date_debut", "datedebut", "heure_debut", "start")
-_END_KEYS = (
-    "fin_estimee",
-    "fin_prevue",
-    "date_fin_prevue",
-    "date_retablissement",
-    "retablissement_prevu",
-    "reparation_prevue",
-    "fin",
-)
-_STATUS_KEYS = ("etat", "statut", "status")
-_MUNICIPALITY_KEYS = ("municipalite", "ville", "municipality")
-_REGION_KEYS = ("region", "regadmin", "region_administrative")
-_TYPE_KEYS = ("type", "type_panne", "categorie", "type_interruption")
+# Format positionnel d'une panne dans le tableau « pannes » de l'API v3_0 :
+#   [nb_clients, début, rétablissement, type, "[lon, lat]", statut, …]
+_IDX_CUSTOMERS = 0  # nombre de clients touchés
+_IDX_START = 1  # début « YYYY-MM-DD HH:MM:SS »
+_IDX_END = 2  # rétablissement prévu (peut être vide)
+_IDX_TYPE = 3  # « P » = panne (non planifiée), autre = interruption planifiée
+_IDX_COORDS = 4  # coordonnées « [lon, lat] »
+_IDX_STATUS = 5  # code de statut d'intervention
 
 
-def _first(record: dict[str, Any], keys: tuple[str, ...]) -> Any:
-    """Retourne la première valeur non vide parmi ``keys``."""
-    for key in keys:
-        value = record.get(key)
-        if value not in (None, ""):
-            return value
-    return None
+def _to_int(value: Any) -> int | None:
+    """Convertit une valeur en entier, ou ``None`` si impossible/vide."""
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
 
 
 @dataclass
@@ -69,6 +60,9 @@ class Outage:
     region: str | None = None
     planned: bool = False
     affects_home: bool = False
+    latitude: float | None = None
+    longitude: float | None = None
+    distance_m: float | None = None
 
 
 @dataclass
@@ -114,42 +108,39 @@ class HydroPanneCoordinator(DataUpdateCoordinator[HydroPanneData]):
     async def _async_update_data(self) -> HydroPanneData:
         """Récupère et traite les pannes autour du domicile."""
         try:
-            records = await self._client.async_get_outages(
-                self.latitude, self.longitude, self.radius
-            )
+            pannes = await self._client.async_get_all_outages()
         except HydroPanneApiError as err:
             raise UpdateFailed(
                 f"Erreur de communication avec Hydro-Québec : {err}"
             ) from err
-        return self._process(records)
+        return self._process(pannes)
 
-    def _process(self, records: list[dict[str, Any]]) -> HydroPanneData:
-        """Transforme les enregistrements bruts en données agrégées."""
+    def _process(self, pannes: list[list[Any]]) -> HydroPanneData:
+        """Filtre les pannes de la province autour du domicile et agrège."""
+        radius = self.radius
         affected: list[Outage] = []
-        nearby: list[Outage] = []
 
-        for record in records:
-            outage = self._parse(record)
-            nearby.append(outage)
-
-            geometry = extract_geometry(record.get("geo_shape"))
-            if geometry is not None:
-                outage.affects_home = point_in_geometry(
-                    self.longitude, self.latitude, geometry
-                )
-            else:
-                # Sans polygone, la panne a quand même été retournée dans le
-                # rayon de recherche : on la considère comme touchant le domicile.
+        for panne in pannes:
+            outage = self._parse(panne)
+            if outage is None or outage.latitude is None:
+                continue
+            outage.distance_m = haversine_m(
+                self.latitude, self.longitude, outage.latitude, outage.longitude
+            )
+            if outage.distance_m <= radius:
                 outage.affects_home = True
-
-            if outage.affects_home:
                 affected.append(outage)
 
+        affected.sort(key=lambda o: o.distance_m or 0.0)
+
+        # Le flux ne fournit qu'un point (centre) par panne, sans polygone :
+        # « touche le domicile » et « à proximité » désignent donc le même
+        # ensemble, les pannes dont le centre est dans le rayon configuré.
         data = HydroPanneData(
             is_outage=bool(affected),
             affected=affected,
-            nearby=nearby,
-            nearby_customers=sum(o.customers or 0 for o in nearby),
+            nearby=affected,
+            nearby_customers=sum(o.customers or 0 for o in affected),
             last_update=dt_util.utcnow(),
         )
 
@@ -165,35 +156,36 @@ class HydroPanneCoordinator(DataUpdateCoordinator[HydroPanneData]):
 
         return data
 
-    def _parse(self, record: dict[str, Any]) -> Outage:
-        """Construit une :class:`Outage` à partir d'un enregistrement brut."""
-        raw_customers = _first(record, _CUSTOMER_KEYS)
-        try:
-            customers = int(raw_customers) if raw_customers is not None else None
-        except (ValueError, TypeError):
-            customers = None
+    def _parse(self, panne: list[Any]) -> Outage | None:
+        """Décode un tableau positionnel « panne » en :class:`Outage`."""
+        if not isinstance(panne, list):
+            return None
 
-        type_text = " ".join(
-            str(record.get(key))
-            for key in (*_TYPE_KEYS, *_STATUS_KEYS)
-            if record.get(key)
-        ).lower()
-        planned = "planif" in type_text or "interruption" in type_text
+        def at(index: int) -> Any:
+            return panne[index] if index < len(panne) else None
+
+        coords = parse_coordinates(at(_IDX_COORDS))
+        if coords is None:
+            return None
+        latitude, longitude = coords
+
+        type_code = str(at(_IDX_TYPE) or "").strip().upper()
+        status = str(at(_IDX_STATUS) or "").strip() or None
 
         return Outage(
-            customers=customers,
-            cause=_first(record, _CAUSE_KEYS),
-            start=self._parse_dt(_first(record, _START_KEYS)),
-            estimated_restoration=self._parse_dt(_first(record, _END_KEYS)),
-            status=_first(record, _STATUS_KEYS),
-            municipality=_first(record, _MUNICIPALITY_KEYS),
-            region=_first(record, _REGION_KEYS),
-            planned=planned,
+            customers=_to_int(at(_IDX_CUSTOMERS)),
+            start=self._parse_dt(at(_IDX_START)),
+            estimated_restoration=self._parse_dt(at(_IDX_END)),
+            status=status,
+            # « P » = panne non planifiée ; tout autre code = interruption planifiée.
+            planned=type_code not in ("", "P"),
+            latitude=latitude,
+            longitude=longitude,
         )
 
     @staticmethod
     def _parse_dt(value: Any) -> datetime | None:
-        """Analyse une date ISO 8601 ; les dates naïves sont localisées (fuseau HA)."""
+        """Analyse une date « YYYY-MM-DD HH:MM:SS » (naïve, localisée au fuseau HA)."""
         if not value:
             return None
         if isinstance(value, (int, float)):
