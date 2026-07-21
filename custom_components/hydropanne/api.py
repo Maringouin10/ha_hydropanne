@@ -7,7 +7,13 @@ from typing import Any
 
 import aiohttp
 
-from .const import API_BASE_URL, API_MAX_RECORDS, API_PAGE_LIMIT, API_TIMEOUT
+from .const import (
+    API_BASE_URL,
+    API_HEADERS,
+    API_MAX_RECORDS,
+    API_PAGE_LIMIT,
+    API_TIMEOUT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,8 +55,18 @@ class HydroPanneApiClient:
                         err.status,
                     )
                     continue
-                raise HydroPanneApiError(str(err)) from err
+                _LOGGER.error(
+                    "L'API de données ouvertes d'Hydro-Québec a répondu HTTP %s "
+                    "(%s) pour %s",
+                    err.status,
+                    err.message,
+                    API_BASE_URL,
+                )
+                raise HydroPanneApiError(f"HTTP {err.status}: {err.message}") from err
             except (aiohttp.ClientError, TimeoutError) as err:
+                _LOGGER.error(
+                    "Échec de communication avec l'API d'Hydro-Québec : %s", err
+                )
                 raise HydroPanneApiError(str(err)) from err
         raise HydroPanneApiError(
             f"Aucun filtre géographique accepté par l'API: {last_error}"
@@ -68,7 +84,7 @@ class HydroPanneApiClient:
                 "offset": offset,
             }
             async with self._session.get(
-                API_BASE_URL, params=params, timeout=timeout
+                API_BASE_URL, params=params, headers=API_HEADERS, timeout=timeout
             ) as resp:
                 resp.raise_for_status()
                 payload = await resp.json()
